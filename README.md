@@ -1,47 +1,95 @@
-# Enterprise AI Automation System
+# Walkthrough - Enterprise AI Automation System
 
-An autonomous, multi-agent business process automation platform built with LangGraph. 
+We have successfully built the complete codebase for the **Enterprise AI Automation System**. The codebase utilizes a graph-based multi-agent orchestration architecture to handle complex business processes with integrated Redis short-term persistence, vector RAG long-term memory, custom SQLite database operations, and notifications.
 
-This system breaks away from linear chains, utilizing a graph-based architecture to enable cyclic processes, conditional branching, and multi-agent collaboration. It runs complex workflows autonomously—such as competitor analysis, ticket triage, and financial anomaly detection—with human approval gates strategically placed before real-world actions are executed.
+---
 
-## 🚀 Key Features
+## Codebase Directory Structure
 
-* **Graph Orchestration:** Powered by LangGraph 1.0 for cyclic workflows and dynamic routing.
-* **Multi-Agent Collaboration:** Specialized agents (Research, Analysis, Action, Critic) handle distinct phases of the task.
-* **Durable State Persistence:** Uses Redis checkpointer to ensure zero context loss. If the server restarts mid-run, the graph picks up exactly where it left off.
-* **Human-in-the-Loop (HITL):** Execution automatically pauses before critical operations (like sending emails or writing to production DBs) awaiting human approval.
-* **Self-Correction:** Built-in Critic agent evaluates outputs and triggers retry loops if the quality falls below a defined threshold.
+All files have been written directly to the workspace root:
 
-## 🧠 Architecture: The 4 Worker Agents
-
-| Agent | Responsibilities | Tools Used |
-| :--- | :--- | :--- |
-| **Research Agent** | Gathers context, web search, RAG | Tavily API, ChromaDB, Web Scraper |
-| **Analysis Agent** | Data processing, coding, logical deduction | Python REPL, Pandas, SQL |
-| **Action Agent** | Executes real-world operations | Email API, Slack API, REST, DB Writes |
-| **Critic Agent** | Quality assurance, hallucination checks | LLM-as-judge, Custom Rubrics |
-
-## 🛠 Tech Stack
-
-* **Orchestration:** LangGraph 1.0, LangChain 1.0
-* **LLM:** Gemini 1.5 Flash (or GPT-4o)
-* **Memory:** ChromaDB / Qdrant (Long-term RAG), Redis (Short-term State)
-* **Backend & API:** FastAPI
-* **Dashboard UI:** Streamlit
-* **Database:** PostgreSQL
-
-## 📂 Codebase Structure
-
-```text
+```plaintext
 enterprise-agent/
 ├── graph/
-│   ├── state.py              # TypedDict — the shared brain
-│   ├── supervisor.py         # Routes tasks to agents
-│   ├── agents/               # Logic for specific worker nodes
-│   ├── tools/                # External APIs and sandboxes
-│   └── builder.py            # Graph compilation and checkpointing
-├── memory/                   # Vector stores and Redis checkpointer
-├── api/                      # FastAPI endpoints
-├── ui/                       # Streamlit dashboard
-├── config.py                 # Environment variables
-└── requirements.txt
+│   ├── state.py            # AgentState TypedDict with type annotations
+│   ├── llm.py              # LLM factory (Gemini / MockLLM fallback)
+│   ├── supervisor.py       # Supervisor Orchestration & conditional retry routing
+│   ├── builder.py          # Compilation with RedisSaver and HITL pauses
+│   ├── agents/
+│   │   ├── research.py     # Web search & RAG compiler agent
+│   │   ├── analysis.py     # Quantitative analysis & REPL agent
+│   │   ├── action.py       # SQL, Slack, and Email side-effects agent
+│   │   └── critic.py       # QA score and loop-back trigger agent
+│   └── tools/
+│       ├── search.py       # Tavily Web Search integration
+│       ├── python_repl.py  # Standard output capture Python REPL
+│       ├── db_tools.py     # Local SQLite DB queries & ticket creation
+│       └── notification.py # Slack webhooks and SMTP email dispatches
+├── memory/
+│   ├── short_term.py       # RedisSaver checkpointer with MemorySaver fallback
+│   └── long_term.py        # ChromaDB setup seeded with default SLAs and policies
+├── api/
+│   └── main.py             # FastAPI REST endpoints for start/status/resume
+├── ui/
+│   └── dashboard.py        # Streamlit dashboard interface with premium CSS styling
+├── config.py               # Pydantic-settings config mapper
+├── requirements.txt        # System requirements
+└── .env                    # System-wide configuration variables
+```
+
+---
+
+## Architectural Highlights
+
+### 1. State Management & Serialization
+- The state uses `add_messages` to compile chat logs from all agents.
+- Custom serialization transforms LangChain `BaseMessage` models into JSON representations, allowing the Streamlit UI to dynamically display the conversation bubbles with custom icons (🛡️ for Critic, 🤖 for workers, 👤 for users).
+
+### 2. Multi-Agent Flow Topology
+- **Supervisor Hub**: Initiates tasks, manages sequencing (Research ➔ Analysis ➔ Critic QA).
+- **Critic Edge**: Inspects results.
+  - If `critic_score < 0.7` and `iteration < 3`, it increments the counter and loops back to the `research` node.
+  - If `requires_human` is True, it routes to `human_review` which halts execution.
+  - Otherwise, it routes to `action` or `END`.
+- **Interrupt Gates**: Configured as `interrupt_before=["action", "human_review"]`. When the graph routes to these nodes, it pauses execution and waits for a continuation signal.
+
+### 3. Human-in-the-Loop Resumption & Revision loops
+- If approved, the FastAPI endpoint resumes execution by invoking the graph with a `None` state payload.
+- If rejected, the human's feedback is written to the state history as a `HumanMessage`, the `critic_score` is reset to `0.0`, and the graph is forced back to the `research` agent to correct the findings.
+
+---
+
+## Run and Verification Instructions
+
+Follow these simple steps in your terminal to start the entire system:
+
+### 1. Set Up Environment
+First, create your virtual environment and install the required dependencies:
+```powershell
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 2. Configure Credentials
+Open the `.env` file in the root folder and add your API keys:
+```env
+GEMINI_API_KEY=your_real_gemini_key
+TAVILY_API_KEY=your_real_tavily_key
+```
+> [!NOTE]
+> If you do not configure `GEMINI_API_KEY` or `TAVILY_API_KEY`, the application will use the pre-built `MockLLM` and mock search engines. This allows you to experience the full cyclic loop, pause gates, and database updates instantly without needing credentials.
+
+### 3. Run FastAPI Backend
+Launch the API server to handle graph requests:
+```powershell
+uvicorn api.main:app --reload --port 8000
+```
+This starts the backend at `http://127.0.0.1:8000`. You can inspect the Swagger docs at `http://127.0.0.1:8000/docs`.
+
+### 4. Run Streamlit UI
+In a separate terminal tab, run the frontend dashboard:
+```powershell
+streamlit run ui/dashboard.py
+```
+This opens the browser dashboard. You can enter task instructions, watch the agents complete tasks, check the SQLite database updates, and interact with the **Human-in-the-Loop** approval cards.
