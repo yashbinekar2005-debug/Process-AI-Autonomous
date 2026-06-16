@@ -2,7 +2,6 @@ import logging
 from langchain_core.messages import AIMessage
 from graph.state import AgentState
 from graph.llm import get_llm
-from langgraph.graph import END
 
 logger = logging.getLogger("enterprise_agent.graph.supervisor")
 
@@ -27,13 +26,18 @@ def supervisor_node(state: AgentState) -> dict:
     # 1. State-based heuristics to enforce standard linear setup
     if not research_output:
         return {"next": "research"}
-        
+
     if not analysis_output:
         return {"next": "analysis"}
-        
+
     if critic_score == 0.0:
         return {"next": "critic"}
-        
+
+    # If actions already executed and critic approved, end the loop
+    if actions_taken and critic_score >= 0.7:
+        logger.info(f"Task completed. Actions={len(actions_taken)}. Critic={critic_score:.2f}. Routing to END.")
+        return {"next": "end"}
+
     # 2. LLM-based scheduling when linear flow needs adjustments
     llm = get_llm()
     prompt = (
@@ -101,6 +105,6 @@ def route_after_critic(state: AgentState) -> str:
     if not actions_taken:
         logger.info("Routing to action node for execution.")
         return "action"
-        
+
     logger.info("Task completion criteria satisfied. Routing to END.")
-    return END
+    return "end"
