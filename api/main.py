@@ -154,10 +154,19 @@ async def resume_task(thread_id: str, payload: ResumeRequest):
     
     try:
         if payload.approved:
-            # Standard resumption
             logger.info("Resuming execution...")
             for event in graph.stream(None, config=config):
                 pass
+            # Keep resuming until graph is no longer paused at interrupt_before nodes
+            max_extra = 5
+            for _ in range(max_extra):
+                state_after = graph.get_state(config)
+                if "action" in state_after.next or "human_review" in state_after.next:
+                    logger.info(f"Resuming past remaining gate: {state_after.next}")
+                    for event in graph.stream(None, config=config):
+                        pass
+                else:
+                    break
         else:
             # Human rejected and provided correction comments
             feedback = payload.feedback if payload.feedback else "Revision requested by human user."

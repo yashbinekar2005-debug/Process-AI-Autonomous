@@ -2,363 +2,536 @@ import streamlit as st
 import httpx
 import json
 import time
+import re
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+from collections import Counter
 
-# Set Page Config for Wide Mode and Dark/Sleek defaults
 st.set_page_config(
-    page_title="Enterprise AI Orchestrator Dashboard",
-    page_icon="🤖",
+    page_title="Enterprise AI Orchestrator",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# API Endpoint URL
 API_URL = "http://localhost:8000/api/tasks"
 
-# 1. Custom CSS for Premium Design Aesthetics
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
 
-/* Main fonts */
 html, body, [class*="css"] {
     font-family: 'Inter', sans-serif;
-    color: #f1f5f9;
+    color: #e2e8f0;
+}
+.stApp {
+    background: #0a0f1e;
+    background: linear-gradient(135deg, #0a0f1e 0%, #0f1729 50%, #0a0f1e 100%);
 }
 
-/* Gradient Titles */
 .gradient-header {
-    background: linear-gradient(135deg, #a78bfa 0%, #818cf8 50%, #6366f1 100%);
+    background: linear-gradient(135deg, #a78bfa 0%, #818cf8 40%, #6366f1 70%, #4f46e5 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     font-family: 'Outfit', sans-serif;
-    font-weight: 700;
-    font-size: 2.8rem;
-    margin-bottom: 5px;
+    font-weight: 800;
+    font-size: 2.6rem;
+    line-height: 1.2;
 }
-
 .gradient-subheader {
     font-family: 'Outfit', sans-serif;
-    font-weight: 600;
-    color: #cbd5e1;
-    margin-top: 0;
-    margin-bottom: 25px;
+    font-weight: 400;
+    color: #64748b;
+    font-size: 0.95rem;
+    letter-spacing: 0.3px;
 }
 
-/* Glassmorphism Cards */
 .glass-card {
-    background: rgba(30, 41, 59, 0.45);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 14px;
-    padding: 20px;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 16px;
+    padding: 24px;
     margin-bottom: 20px;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    transition: border-color 0.3s;
+}
+.glass-card:hover {
+    border-color: rgba(129, 140, 248, 0.15);
+}
+
+.kpi-card {
+    background: rgba(15, 23, 42, 0.5);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+}
+.kpi-value {
+    font-family: 'Outfit', sans-serif;
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #f1f5f9;
+}
+.kpi-label {
+    font-size: 0.75rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
 }
 
 .approval-card {
-    background: rgba(245, 158, 11, 0.08);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    border-radius: 12px;
-    padding: 20px;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.06), rgba(245, 158, 11, 0.02));
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: 14px;
+    padding: 24px;
     margin-bottom: 20px;
 }
 
-/* Status Badges */
-.status-badge-running {
-    background-color: rgba(59, 130, 246, 0.12);
-    border: 1px solid #3b82f6;
-    color: #60a5fa;
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 14px;
     border-radius: 999px;
-    padding: 5px 14px;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 600;
-    display: inline-block;
-    text-align: center;
+    font-family: 'Outfit', sans-serif;
 }
+.status-completed { background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; color: #34d399; }
+.status-paused { background: rgba(245, 158, 11, 0.1); border: 1px solid #f59e0b; color: #fbbf24; }
+.status-running { background: rgba(59, 130, 246, 0.1); border: 1px solid #3b82f6; color: #60a5fa; }
 
-.status-badge-paused {
-    background-color: rgba(245, 158, 11, 0.12);
-    border: 1px solid #f59e0b;
-    color: #fbbf24;
-    border-radius: 999px;
-    padding: 5px 14px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    display: inline-block;
-    text-align: center;
-}
-
-.status-badge-completed {
-    background-color: rgba(16, 185, 129, 0.12);
-    border: 1px solid #10b981;
-    color: #34d399;
-    border-radius: 999px;
-    padding: 5px 14px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    display: inline-block;
-    text-align: center;
-}
-
-/* Agent Bubble Layouts */
 .agent-bubble {
-    background-color: rgba(15, 23, 42, 0.6);
-    border-left: 4px solid #6366f1;
+    background: rgba(15, 23, 42, 0.5);
+    border-left: 3px solid #6366f1;
     padding: 12px 18px;
-    margin-bottom: 15px;
+    margin-bottom: 12px;
     border-radius: 0 10px 10px 0;
 }
-
 .critic-bubble {
-    background-color: rgba(245, 158, 11, 0.05);
-    border-left: 4px solid #f59e0b;
+    background: rgba(245, 158, 11, 0.04);
+    border-left: 3px solid #f59e0b;
     padding: 12px 18px;
-    margin-bottom: 15px;
+    margin-bottom: 12px;
     border-radius: 0 10px 10px 0;
 }
-
 .user-bubble {
-    background-color: rgba(51, 65, 85, 0.4);
-    border-left: 4px solid #94a3b8;
+    background: rgba(51, 65, 85, 0.2);
+    border-left: 3px solid #475569;
     padding: 12px 18px;
-    margin-bottom: 15px;
+    margin-bottom: 12px;
     border-radius: 0 10px 10px 0;
 }
-
 .agent-title {
     font-weight: 600;
-    font-size: 0.9rem;
-    color: #cbd5e1;
+    font-size: 0.85rem;
+    color: #94a3b8;
     margin-bottom: 4px;
+}
+
+.section-title {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #cbd5e1;
+    margin-bottom: 12px;
+}
+
+div[data-testid="stTabs"] button {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.85rem;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# 2. State management
+# --- State ---
 if "threads" not in st.session_state:
     st.session_state["threads"] = []
 if "current_thread" not in st.session_state:
     st.session_state["current_thread"] = None
+if "auto_refresh" not in st.session_state:
+    st.session_state["auto_refresh"] = False
 
-# Header Title UI
+# --- Helpers ---
+def fetch_task(thread_id):
+    try:
+        r = httpx.get(f"{API_URL}/{thread_id}", timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except:
+        pass
+    return None
+
+def extract_chart_data(text):
+    if not text:
+        return {}
+    data = {}
+
+    # --- BAR CHART: Extract "$XX/month" or "$XX/yr" patterns with preceding names ---
+    pricing_pattern = r'([A-Za-z][A-Za-z\s]+?)\s*[:\-]?\s*\$(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:/\s*(?:month|mo|yr|year|user|seat|agent))'
+    pricing_matches = re.findall(pricing_pattern, text, re.IGNORECASE)
+    if pricing_matches:
+        items = []
+        for name, price in pricing_matches:
+            clean_name = name.strip().rstrip(',').rstrip(':')
+            clean_price = float(price.replace(',', ''))
+            items.append((clean_name, clean_price))
+        if items:
+            data["bar"] = {"type": "pricing", "items": items, "title": "Pricing Comparison ($/month)"}
+
+    # --- PIE CHART: Extract "X%" patterns with labels ---
+    percent_pattern = r'([A-Za-z][A-Za-z\s]+?)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*%'
+    percent_matches = re.findall(percent_pattern, text, re.IGNORECASE)
+    if percent_matches:
+        items = []
+        for label, val in percent_matches:
+            clean_label = label.strip().rstrip(',').rstrip(':')
+            items.append((clean_label, float(val)))
+        if items:
+            data["pie"] = {"items": items, "title": "Distribution Breakdown"}
+
+    # --- BAR CHART 2: Extract numbered lists with $ values (fallback) ---
+    if "bar" not in data:
+        list_pattern = r'(?:^|\n)\s*[\-\*]\s*(.+?)\s*[:\-]?\s*\$(\d+(?:,\d{3})*(?:\.\d+)?)'
+        list_matches = re.findall(list_pattern, text, re.IGNORECASE | re.MULTILINE)
+        if list_matches:
+            items = [(name.strip(), float(price.replace(',', ''))) for name, price in list_matches[:10]]
+            if items:
+                data["bar"] = {"type": "generic", "items": items, "title": "Extracted Metrics ($)"}
+
+    return data
+
+def render_charts(chart_data):
+    if not chart_data:
+        st.info("No structured data available for visualization. The agent's output is text-based.")
+        return
+
+    col1, col2 = st.columns(2)
+
+    if "pie" in chart_data:
+        with col1:
+            items = chart_data["pie"]["items"]
+            df = pd.DataFrame(items, columns=["Category", "Value"])
+            fig = px.pie(df, values="Value", names="Category",
+                         title=chart_data["pie"]["title"],
+                         color_discrete_sequence=px.colors.sequential.Viridis,
+                         hole=0.4)
+            fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#cbd5e1", title_font_color="#f1f5f9",
+                margin=dict(t=40, b=20, l=20, r=20)
+            )
+            fig.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig, use_container_width=True)
+
+    if "bar" in chart_data:
+        with col2 if "pie" in chart_data else col1:
+            items = chart_data["bar"]["items"]
+            df = pd.DataFrame(items, columns=["Entity", "Value"])
+            fig = px.bar(df, x="Entity", y="Value",
+                         title=chart_data["bar"]["title"],
+                         color="Value", color_continuous_scale="viridis",
+                         text_auto='.2s')
+            fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#cbd5e1", title_font_color="#f1f5f9",
+                xaxis_title=None, yaxis_title="Price ($)",
+                margin=dict(t=40, b=20, l=20, r=20)
+            )
+            fig.update_traces(textfont_color="#f1f5f9")
+            st.plotly_chart(fig, use_container_width=True)
+
+def render_kpi_metrics(state_vals):
+    cols = st.columns(5)
+    metrics = [
+        ("Critic Score", f"{state_vals.get('critic_score', 0.0):.2f}", "score"),
+        ("Iteration", f"{state_vals.get('iteration', 0)}/3", "loop"),
+        ("Human Review", "Required" if state_vals.get("requires_human") else "Auto", "flag"),
+        ("Actions", f"{len(state_vals.get('actions_taken', []))}", "actions"),
+        ("Threads", f"{len(st.session_state['threads'])}", "threads"),
+    ]
+    colors = ["#818cf8", "#34d399", "#f59e0b", "#f472b6", "#60a5fa"]
+    for i, (label, value, _) in enumerate(metrics):
+        with cols[i]:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-value" style="color:{colors[i]}">{value}</div>
+                <div class="kpi-label">{label}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+# --- Sidebar ---
+with st.sidebar:
+    st.markdown('<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+                '<span style="font-size:1.6rem;">⚡</span>'
+                '<span style="font-family:Outfit;font-weight:700;font-size:1.3rem;color:#e2e8f0;">Enterprise AI</span>'
+                '</div>', unsafe_allow_html=True)
+    st.markdown('<p style="color:#475569;font-size:0.8rem;margin-top:-8px;margin-bottom:20px;">Multi-Agent Automation Hub</p>', unsafe_allow_html=True)
+
+    api_status = False
+    try:
+        httpx.get(API_URL.replace("/tasks", ""), timeout=5)
+        api_status = True
+    except:
+        api_status = False
+
+    if api_status:
+        st.markdown(f'<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:8px;margin-bottom:16px;"><span style="color:#34d399;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">Backend Connected</span></div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.15);border-radius:8px;margin-bottom:16px;"><span style="color:#ef4444;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">Disconnected</span></div>', unsafe_allow_html=True)
+        st.markdown('<p style="color:#64748b;font-size:0.75rem;">Run: <code style="background:#1e293b;padding:2px 6px;border-radius:4px;">uvicorn api.main:app --reload --port 8000</code></p>', unsafe_allow_html=True)
+
+    st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin:16px 0;"></div>', unsafe_allow_html=True)
+
+    st.markdown('<p style="font-family:Outfit;font-weight:600;font-size:0.9rem;color:#cbd5e1;">🚀 New Task</p>', unsafe_allow_html=True)
+    new_task = st.text_area(
+        "Task Description",
+        placeholder="e.g. Compare AWS vs Azure pricing for 1M requests. Calculate savings.",
+        height=100, label_visibility="collapsed"
+    )
+
+    trigger_col, refresh_col = st.columns([3, 1])
+    with trigger_col:
+        triggered = st.button("Trigger Automation", use_container_width=True, type="primary")
+    with refresh_col:
+        if st.button("↻", use_container_width=True, help="Refresh current thread"):
+            st.rerun()
+
+    if triggered:
+        if not new_task.strip():
+            st.warning("Enter a task first.")
+        elif not api_status:
+            st.error("Backend not connected.")
+        else:
+            with st.spinner("Running multi-agent graph..."):
+                try:
+                    res = httpx.post(API_URL, json={"task": new_task}, timeout=120.0)
+                    if res.status_code == 200:
+                        data = res.json()
+                        tid = data["thread_id"]
+                        if tid not in st.session_state["threads"]:
+                            st.session_state["threads"].insert(0, tid)
+                        st.session_state["current_thread"] = tid
+                        st.success("Task started!")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"Error: {res.text}")
+                except Exception as e:
+                    st.error(f"Connection error: {e}")
+
+    st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin:16px 0;"></div>', unsafe_allow_html=True)
+    st.markdown('<p style="font-family:Outfit;font-weight:600;font-size:0.9rem;color:#cbd5e1;">📂 Threads</p>', unsafe_allow_html=True)
+
+    auto_refresh = st.toggle("Auto-refresh (5s)", value=st.session_state["auto_refresh"])
+    if auto_refresh != st.session_state["auto_refresh"]:
+        st.session_state["auto_refresh"] = auto_refresh
+        st.rerun()
+
+    if st.session_state["threads"]:
+        selected = st.selectbox(
+            "Select thread:",
+            st.session_state["threads"],
+            index=st.session_state["threads"].index(st.session_state["current_thread"]) if st.session_state["current_thread"] in st.session_state["threads"] else 0,
+            label_visibility="collapsed"
+        )
+        if selected != st.session_state["current_thread"]:
+            st.session_state["current_thread"] = selected
+            st.rerun()
+
+        if st.button("Clear All Threads", use_container_width=True):
+            st.session_state["threads"] = []
+            st.session_state["current_thread"] = None
+            st.rerun()
+    else:
+        st.markdown('<p style="color:#475569;font-size:0.85rem;text-align:center;padding:12px 0;">No threads yet.<br>Trigger a task to begin.</p>', unsafe_allow_html=True)
+
+# --- Main Panel ---
 st.markdown('<div class="gradient-header">Enterprise AI Orchestrator</div>', unsafe_allow_html=True)
 st.markdown('<div class="gradient-subheader">Multi-Agent Business Process Automation Hub</div>', unsafe_allow_html=True)
+st.markdown("<br>", unsafe_allow_html=True)
 
-# 3. Sidebar Configuration
-st.sidebar.markdown("### ⚙️ System Configuration")
-
-# Test Connection Status
-api_status = False
-try:
-    # Just check if backend endpoint answers
-    response = httpx.get(API_URL.replace("/tasks", ""))
-    api_status = True
-except Exception:
-    api_status = False
-
-if api_status:
-    st.sidebar.success("● API Backend: Connected")
-else:
-    st.sidebar.error("○ API Backend: Disconnected")
-    st.sidebar.markdown(
-        "> [!WARNING]\n"
-        "> The API backend is not detected. Please run the server in your terminal:\n"
-        "> `uvicorn api.main:app --reload --port 8000`"
-    )
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🚀 Trigger New Task")
-new_task_input = st.sidebar.text_area(
-    "Describe the Business Process:",
-    placeholder="e.g. Compare SaaS support plans from Zendesk vs Salesforce. Calculate savings and update tickets.",
-    height=120
-)
-
-if st.sidebar.button("Trigger Automation Process", use_container_width=True):
-    if not new_task_input.strip():
-        st.sidebar.warning("Please enter a task description first.")
-    elif not api_status:
-        st.sidebar.error("Cannot connect to API server. Please start the backend.")
-    else:
-        with st.spinner("Initializing multi-agent graph..."):
-            try:
-                res = httpx.post(API_URL, json={"task": new_task_input}, timeout=60.0)
-                if res.status_code == 200:
-                    task_data = res.json()
-                    tid = task_data["thread_id"]
-                    if tid not in st.session_state["threads"]:
-                        st.session_state["threads"].insert(0, tid)
-                    st.session_state["current_thread"] = tid
-                    st.toast("Automation initiated successfully!")
-                else:
-                    st.sidebar.error(f"Error starting task: {res.text}")
-            except Exception as e:
-                st.sidebar.error(f"API Connection error: {str(e)}")
-
-# Select thread history dropdown
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📂 Execution Threads")
-
-if st.session_state["threads"]:
-    selected_thread = st.sidebar.selectbox(
-        "Active Task Threads:",
-        st.session_state["threads"],
-        index=0 if st.session_state["current_thread"] not in st.session_state["threads"] else st.session_state["threads"].index(st.session_state["current_thread"])
-    )
-    if selected_thread != st.session_state["current_thread"]:
-        st.session_state["current_thread"] = selected_thread
-else:
-    st.sidebar.info("No active execution threads. Enter a process to begin.")
-    selected_thread = None
-
-# Refresh button
-if selected_thread and st.sidebar.button("Refresh Thread State", use_container_width=True):
-    st.rerun()
-
-# 4. Main Panel Logic
-if not selected_thread:
-    # Showcase information card if empty
+if not st.session_state["current_thread"]:
     st.markdown("""
-    <div class="glass-card">
-        <h3>Welcome to the Enterprise AI Automation System</h3>
-        <p>This orchestrator uses a graph-based cyclic flow to execute enterprise business workflows autonomously.</p>
-        <p>The orchestrator coordinates four specialized agents:</p>
-        <ul>
-            <li><strong>Research Agent:</strong> Web search and semantic knowledge retrieval.</li>
-            <li><strong>Analysis Agent:</strong> Numerical computations and Python code REPL analysis.</li>
-            <li><strong>Critic Agent:</strong> QA auditing, hallucinations detection, scoring, and retry coordination.</li>
-            <li><strong>Action Agent:</strong> Writing back to SQLite DB, triggering SMTP emails, and Slack Webhooks (requires human approval).</li>
-        </ul>
-        <p><em>To get started, describe a task in the left panel and click <strong>Trigger Automation Process</strong>.</em></p>
+    <div class="glass-card" style="text-align:center;padding:48px 24px;">
+        <div style="font-size:3rem;margin-bottom:16px;">⚡</div>
+        <h3 style="font-family:Outfit;font-weight:600;color:#cbd5e1;margin-bottom:8px;">Welcome to Enterprise AI Orchestrator</h3>
+        <p style="color:#64748b;max-width:600px;margin:0 auto;line-height:1.6;">
+            A multi-agent automation system powered by LangGraph.<br>
+            Describe a business task → the agents research, analyze, critique, and act autonomously.
+        </p>
+        <div style="display:flex;justify-content:center;gap:24px;margin-top:24px;flex-wrap:wrap;">
+            <div style="text-align:center;padding:12px 20px;background:rgba(99,102,241,0.06);border-radius:10px;border:1px solid rgba(99,102,241,0.1);min-width:120px;">
+                <div style="font-size:1.4rem;font-weight:700;color:#818cf8;">🔍</div>
+                <div style="font-size:0.75rem;color:#64748b;">Research</div>
+            </div>
+            <div style="text-align:center;padding:12px 20px;background:rgba(52,211,153,0.06);border-radius:10px;border:1px solid rgba(52,211,153,0.1);min-width:120px;">
+                <div style="font-size:1.4rem;font-weight:700;color:#34d399;">📊</div>
+                <div style="font-size:0.75rem;color:#64748b;">Analysis</div>
+            </div>
+            <div style="text-align:center;padding:12px 20px;background:rgba(245,158,11,0.06);border-radius:10px;border:1px solid rgba(245,158,11,0.1);min-width:120px;">
+                <div style="font-size:1.4rem;font-weight:700;color:#f59e0b;">🛡️</div>
+                <div style="font-size:0.75rem;color:#64748b;">Critic QA</div>
+            </div>
+            <div style="text-align:center;padding:12px 20px;background:rgba(244,114,182,0.06);border-radius:10px;border:1px solid rgba(244,114,182,0.1);min-width:120px;">
+                <div style="font-size:1.4rem;font-weight:700;color:#f472b6;">⚡</div>
+                <div style="font-size:0.75rem;color:#64748b;">Action</div>
+            </div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 else:
-    # Query API for state
-    try:
-        res = httpx.get(f"{API_URL}/{selected_thread}")
-        if res.status_code == 200:
-            task_status = res.json()
-            state_vals = task_status["state"]
-            status_label = task_status["status"]
-            pending = task_status["pending_nodes"]
-            
-            # Display summary header card
-            col_info, col_stat = st.columns([3, 1])
-            with col_info:
-                st.markdown(f"#### Thread ID: `{selected_thread}`")
-                st.markdown(f"**Task**: {state_vals.get('task')}")
-            with col_stat:
-                # Format status badge
-                if status_label == "completed":
-                    st.markdown('<div class="status-badge-completed">🟢 Completed</div>', unsafe_allow_html=True)
-                elif status_label == "paused":
-                    st.markdown('<div class="status-badge-paused">🟡 Paused (Awaiting Human)</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="status-badge-running">🔵 Running / Processing</div>', unsafe_allow_html=True)
-                    
-            # 5. Human-in-the-Loop Review Gate
-            if status_label == "paused":
-                st.markdown('<div class="approval-card">', unsafe_allow_html=True)
-                st.markdown("### ⚠️ Human-in-the-Loop Approval Required")
-                st.write(f"The process is currently paused before executing: **`{pending}`**.")
-                st.write("Review the agent outputs below. You can approve and trigger operations, or request changes and force agents to revise.")
-                
-                # Feedback text area
-                feedback_txt = st.text_area("Revision Feedback (Only needed if rejecting):", placeholder="e.g. Please search for Gamma Co as well, and recalculate the pricing structure.")
-                
-                col_btn1, col_btn2 = st.columns(2)
-                with col_btn1:
-                    if st.button("👍 Approve Execution & Complete", use_container_width=True):
-                        with st.spinner("Resuming workflow..."):
-                            res_resume = httpx.post(f"{API_URL}/{selected_thread}/resume", json={"approved": True})
-                            if res_resume.status_code == 200:
-                                st.success("Task approved and executed!")
-                                time.sleep(1.0)
+    if st.session_state["auto_refresh"]:
+        time.sleep(0.1)
+        st.rerun()
+
+    task_data = fetch_task(st.session_state["current_thread"])
+
+    if not task_data:
+        st.error("Failed to fetch task state. Thread may have expired.")
+    else:
+        state = task_data["state"]
+        status = task_data["status"]
+        pending = task_data["pending_nodes"]
+
+        render_kpi_metrics(state)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        info_col, badge_col = st.columns([4, 1])
+        with info_col:
+            st.markdown(f'<span style="font-family:Outfit;font-weight:600;color:#94a3b8;font-size:0.8rem;">THREAD</span> <code style="background:#1e293b;padding:2px 8px;border-radius:6px;font-size:0.8rem;">{st.session_state["current_thread"][:8]}...</code>', unsafe_allow_html=True)
+            st.markdown(f'<p style="color:#e2e8f0;margin-top:4px;font-size:0.95rem;">{state.get("task", "")}</p>', unsafe_allow_html=True)
+        with badge_col:
+            cls = {"completed": "status-completed", "paused": "status-paused", "running": "status-running"}.get(status, "status-running")
+            icon = {"completed": "🟢", "paused": "🟡", "running": "🔵"}.get(status, "🔵")
+            label = {"completed": "Completed", "paused": "Paused", "running": "Running"}.get(status, "Running")
+            st.markdown(f'<div class="status-badge {cls}">{icon} {label}</div>', unsafe_allow_html=True)
+
+        # Human review gate
+        if status == "paused":
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown('<div class="approval-card">', unsafe_allow_html=True)
+            st.markdown(f'<p style="font-family:Outfit;font-weight:600;color:#fbbf24;font-size:1rem;">⚠️ Human Approval Required</p>', unsafe_allow_html=True)
+            st.markdown(f'<p style="color:#94a3b8;font-size:0.85rem;">Paused before: <code style="background:#1e293b;padding:2px 6px;border-radius:4px;">{pending}</code></p>', unsafe_allow_html=True)
+
+            feedback = st.text_area("Revision feedback (only if rejecting):", placeholder="e.g. Search for Gamma Co too...", height=80)
+            a1, a2 = st.columns(2)
+            with a1:
+                if st.button("✅ Approve & Execute", use_container_width=True):
+                    try:
+                        r = httpx.post(f"{API_URL}/{st.session_state['current_thread']}/resume", json={"approved": True}, timeout=180.0)
+                        if r.status_code == 200:
+                            st.success("Approved! Resuming...")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"Failed ({r.status_code}): {r.text}")
+                    except Exception as e:
+                        st.error(f"Connection error: {e}")
+            with a2:
+                if st.button("🔄 Request Revision", use_container_width=True):
+                    if not feedback.strip():
+                        st.warning("Provide feedback first.")
+                    else:
+                        try:
+                            r = httpx.post(f"{API_URL}/{st.session_state['current_thread']}/resume", json={"approved": False, "feedback": feedback}, timeout=180.0)
+                            if r.status_code == 200:
+                                st.info("Feedback sent. Looping back to research...")
+                                time.sleep(1)
                                 st.rerun()
                             else:
-                                st.error("Failed to resume task.")
-                with col_btn2:
-                    if st.button("👎 Request Revision & Loop Back", use_container_width=True):
-                        if not feedback_txt.strip():
-                            st.warning("Please provide revision feedback description.")
-                        else:
-                            with st.spinner("Routing back to Research agent..."):
-                                res_resume = httpx.post(f"{API_URL}/{selected_thread}/resume", json={"approved": False, "feedback": feedback_txt})
-                                if res_resume.status_code == 200:
-                                    st.info("Feedback registered. Retrying graph steps...")
-                                    time.sleep(1.0)
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to route back.")
-                st.markdown('</div>', unsafe_allow_html=True)
+                                st.error(f"Failed ({r.status_code}): {r.text}")
+                        except Exception as e:
+                            st.error(f"Connection error: {e}")
+            st.markdown('</div>', unsafe_allow_html=True)
 
-            # 6. Tabbed Output Panels
-            tab_logs, tab_research, tab_analysis, tab_actions = st.tabs([
-                "💬 Agent Message Logs", 
-                "🔍 Research Report", 
-                "📊 Code & Analysis", 
-                "⚡ Side Effects Executed"
-            ])
-            
-            with tab_logs:
-                st.markdown("### Multi-Agent Conversational History")
-                for msg in state_vals.get("messages", []):
-                    role = msg["role"]
-                    name = msg["name"]
-                    content = msg["content"]
-                    
-                    if "CriticAgent" in name:
-                        bubble_style = "critic-bubble"
-                        icon = "🛡️"
-                    elif "user" in role:
-                        bubble_style = "user-bubble"
-                        icon = "👤"
-                    else:
-                        bubble_style = "agent-bubble"
-                        icon = "🤖"
-                        
-                    st.markdown(f"""
-                    <div class="{bubble_style}">
-                        <div class="agent-title">{icon} {name}</div>
-                        <div>{content}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-            with tab_research:
-                st.markdown("### Research Findings Output")
-                research_text = state_vals.get("research_output")
+        # Tabs
+        st.markdown("<br>", unsafe_allow_html=True)
+        tabs = st.tabs(["📊 Dashboard", "💬 Messages", "🔍 Research", "📈 Analysis", "⚡ Actions"])
+
+        # --- TAB 1: Dashboard with charts ---
+        with tabs[0]:
+            research_text = state.get("research_output", "")
+            analysis_text = state.get("analysis_output", "")
+
+            chart_data = extract_chart_data(research_text + "\n" + analysis_text)
+
+            if chart_data:
+                st.markdown('<p class="section-title">📊 Visual Insights</p>', unsafe_allow_html=True)
+                render_charts(chart_data)
+            else:
+                st.markdown('<p class="section-title">📊 Visual Insights</p>', unsafe_allow_html=True)
+                st.info("No structured numerical data detected for charts. The agent output is text-based. Try a comparison task like 'Compare AWS vs Azure pricing'.")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown('<p class="section-title">🔍 Research Summary</p>', unsafe_allow_html=True)
                 if research_text:
-                    st.markdown(research_text)
+                    st.markdown(f'<div style="background:rgba(15,23,42,0.3);border-radius:10px;padding:16px;max-height:300px;overflow-y:auto;font-size:0.85rem;color:#cbd5e1;line-height:1.6;">{research_text[:2000]}</div>', unsafe_allow_html=True)
                 else:
-                    st.info("No research report generated yet.")
-                    
-            with tab_analysis:
-                st.markdown("### Analytical Computations & Reasoning")
-                analysis_text = state_vals.get("analysis_output")
+                    st.markdown('<p style="color:#475569;">Pending...</p>', unsafe_allow_html=True)
+            with col2:
+                st.markdown('<p class="section-title">📈 Analysis Summary</p>', unsafe_allow_html=True)
                 if analysis_text:
-                    st.markdown(analysis_text)
+                    st.markdown(f'<div style="background:rgba(15,23,42,0.3);border-radius:10px;padding:16px;max-height:300px;overflow-y:auto;font-size:0.85rem;color:#cbd5e1;line-height:1.6;">{analysis_text[:2000]}</div>', unsafe_allow_html=True)
                 else:
-                    st.info("No analysis output generated yet.")
-                    
-            with tab_actions:
-                st.markdown("### DB Updates, Slack Notifications & Emails")
-                actions = state_vals.get("actions_taken", [])
-                if actions:
-                    for a in actions:
-                        st.markdown(f"- {a}")
+                    st.markdown('<p style="color:#475569;">Pending...</p>', unsafe_allow_html=True)
+
+        # --- TAB 2: Messages ---
+        with tabs[1]:
+            st.markdown('<p class="section-title">💬 Agent Conversation Log</p>', unsafe_allow_html=True)
+            for msg in state.get("messages", []):
+                role = msg["role"]
+                name = msg["name"]
+                content = msg["content"]
+                if "CriticAgent" in name:
+                    cls = "critic-bubble"; icon = "🛡️"
+                elif "user" in role:
+                    cls = "user-bubble"; icon = "👤"
                 else:
-                    st.info("No external actions have been executed yet (awaits human approval).")
-                    
-            # Iteration tracker footer
-            st.markdown("---")
-            st.markdown(
-                f"**System Statistics**: "
-                f"Critic Rating Score: `{state_vals.get('critic_score')}` | "
-                f"Retry Loops: `{state_vals.get('iteration')}/3` | "
-                f"Human approval flag: `{state_vals.get('requires_human')}`"
-            )
-            
-        else:
-            st.error(f"Failed to fetch task details. Status code: {res.status_code}")
-    except Exception as e:
-        st.error(f"Failed to load task state from FastAPI: {str(e)}")
+                    cls = "agent-bubble"; icon = "🤖"
+                st.markdown(f'<div class="{cls}"><div class="agent-title">{icon} {name}</div><div style="font-size:0.85rem;">{content}</div></div>', unsafe_allow_html=True)
+
+        # --- TAB 3: Research ---
+        with tabs[2]:
+            st.markdown('<p class="section-title">🔍 Full Research Report</p>', unsafe_allow_html=True)
+            if research_text:
+                st.markdown(f'<div style="background:rgba(15,23,42,0.3);border-radius:10px;padding:20px;font-size:0.85rem;color:#cbd5e1;line-height:1.7;">{research_text}</div>', unsafe_allow_html=True)
+            else:
+                st.info("No research output yet.")
+
+        # --- TAB 4: Analysis ---
+        with tabs[3]:
+            st.markdown('<p class="section-title">📈 Full Analysis Report</p>', unsafe_allow_html=True)
+            if analysis_text:
+                st.markdown(f'<div style="background:rgba(15,23,42,0.3);border-radius:10px;padding:20px;font-size:0.85rem;color:#cbd5e1;line-height:1.7;">{analysis_text}</div>', unsafe_allow_html=True)
+            else:
+                st.info("No analysis output yet.")
+
+        # --- TAB 5: Actions ---
+        with tabs[4]:
+            st.markdown('<p class="section-title">⚡ Side Effects Executed</p>', unsafe_allow_html=True)
+            actions = state.get("actions_taken", [])
+            if actions:
+                for a in actions:
+                    st.markdown(f'<div style="background:rgba(16,185,129,0.04);border:1px solid rgba(16,185,129,0.1);border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:0.85rem;color:#94a3b8;">→ {a}</div>', unsafe_allow_html=True)
+            else:
+                st.info("No actions executed yet (awaits human approval or task completion).")
+
+        # Footer stats
+        st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin-top:24px;padding-top:16px;">', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="display:flex;gap:24px;font-size:0.8rem;color:#475569;">'
+            f'<span>Critic Score: <strong style="color:#818cf8;">{state.get("critic_score", 0.0):.2f}</strong></span>'
+            f'<span>Iteration: <strong style="color:#34d399;">{state.get("iteration", 0)}/3</strong></span>'
+            f'<span>Human Review: <strong style="color:#f59e0b;">{"⚠️ Required" if state.get("requires_human") else "✅ Auto"}</strong></span>'
+            f'<span>Actions: <strong style="color:#f472b6;">{len(actions)}</strong></span>'
+            f'</div>', unsafe_allow_html=True
+        )
+        st.markdown('</div>', unsafe_allow_html=True)

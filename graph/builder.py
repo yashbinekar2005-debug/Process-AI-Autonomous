@@ -28,18 +28,8 @@ def human_review_node(state: AgentState) -> dict:
     return {"requires_human": False}
 
 def route_supervisor(state: AgentState) -> str:
-    """
-    Orchestration edge that routes the supervisor's decision to the worker nodes.
-    
-    Args:
-        state (AgentState): Current state.
-        
-    Returns:
-        str: Target node name.
-    """
+    """Routes supervisor's decision. Returns the node name; the conditional edge map resolves 'end' to END."""
     next_node = state.get("next", "critic").strip().lower()
-    if next_node == "end":
-        return END
     return next_node
 
 def get_graph():
