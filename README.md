@@ -1,95 +1,146 @@
-# Walkthrough - Enterprise AI Automation System
+# Enterprise AI Automation System
 
-We have successfully built the complete codebase for the **Enterprise AI Automation System**. The codebase utilizes a graph-based multi-agent orchestration architecture to handle complex business processes with integrated Redis short-term persistence, vector RAG long-term memory, custom SQLite database operations, and notifications.
+A graph-based multi-agent orchestration system that automates business processes using LLM-powered agents. Supports **local Ollama (Llama 3.2)** or **Gemini API** with automatic fallback.
 
----
-
-## Codebase Directory Structure
-
-All files have been written directly to the workspace root:
+## Architecture
 
 ```plaintext
 enterprise-agent/
 ├── graph/
-│   ├── state.py            # AgentState TypedDict with type annotations
-│   ├── llm.py              # LLM factory (Gemini / MockLLM fallback)
-│   ├── supervisor.py       # Supervisor Orchestration & conditional retry routing
-│   ├── builder.py          # Compilation with RedisSaver and HITL pauses
+│   ├── state.py              # AgentState TypedDict
+│   ├── llm.py                # LLM factory: Ollama → Gemini → MockLLM (fallback chain)
+│   ├── supervisor.py         # Supervisor orchestration & heuristic routing
+│   ├── builder.py            # LangGraph compilation with checkpointer & interrupt gates
 │   ├── agents/
-│   │   ├── research.py     # Web search & RAG compiler agent
-│   │   ├── analysis.py     # Quantitative analysis & REPL agent
-│   │   ├── action.py       # SQL, Slack, and Email side-effects agent
-│   │   └── critic.py       # QA score and loop-back trigger agent
+│   │   ├── research.py       # Web search + RAG synthesis agent
+│   │   ├── analysis.py       # Quantitative analysis + Python REPL agent
+│   │   ├── action.py         # SQLite, Slack, Email side-effect agent
+│   │   └── critic.py         # QA scoring, retry loop, human-review trigger
 │   └── tools/
-│       ├── search.py       # Tavily Web Search integration
-│       ├── python_repl.py  # Standard output capture Python REPL
-│       ├── db_tools.py     # Local SQLite DB queries & ticket creation
-│       └── notification.py # Slack webhooks and SMTP email dispatches
+│       ├── search.py         # Web search: Tavily → DuckDuckGo (free fallback)
+│       ├── python_repl.py    # Safe Python REPL with output capture
+│       ├── db_tools.py       # Local SQLite queries
+│       └── notification.py   # Slack webhook + SMTP email dispatches
 ├── memory/
-│   ├── short_term.py       # RedisSaver checkpointer with MemorySaver fallback
-│   └── long_term.py        # ChromaDB setup seeded with default SLAs and policies
+│   ├── short_term.py         # RedisSaver checkpointer (falls back to MemorySaver)
+│   └── long_term.py          # ChromaDB vector store with SLA/policy seed data
 ├── api/
-│   └── main.py             # FastAPI REST endpoints for start/status/resume
+│   └── main.py               # FastAPI: create task, get status, resume (with multi-gate handling)
 ├── ui/
-│   └── dashboard.py        # Streamlit dashboard interface with premium CSS styling
-├── config.py               # Pydantic-settings config mapper
-├── requirements.txt        # System requirements
-└── .env                    # System-wide configuration variables
+│   └── dashboard.py          # Streamlit dashboard with charts, KPI cards, auto-refresh
+├── config.py                 # Pydantic-settings (Ollama, Gemini, retry, etc.)
+├── .env.example              # Template for configuration
+└── requirements.txt
 ```
 
----
+## Agent Workflow
 
-## Architectural Highlights
+```
+User Task → Supervisor → Research → Supervisor → Analysis → Supervisor → Critic
+                                                                          │
+                              ┌───────────────────────────────────────────┤
+                              ▼                                           │
+                        Action (DB/Slack/Email)                   score < 0.7?
+                              │                                     retry → Research
+                              ▼                                     score ≥ 0.7
+                         Supervisor ──→ END                     requires_human?
+                                                                      │
+                                                                      ▼
+                                                              Human Review Gate
+                                                              (Approve / Revise)
+```
 
-### 1. State Management & Serialization
-- The state uses `add_messages` to compile chat logs from all agents.
-- Custom serialization transforms LangChain `BaseMessage` models into JSON representations, allowing the Streamlit UI to dynamically display the conversation bubbles with custom icons (🛡️ for Critic, 🤖 for workers, 👤 for users).
+## Quick Start
 
-### 2. Multi-Agent Flow Topology
-- **Supervisor Hub**: Initiates tasks, manages sequencing (Research ➔ Analysis ➔ Critic QA).
-- **Critic Edge**: Inspects results.
-  - If `critic_score < 0.7` and `iteration < 3`, it increments the counter and loops back to the `research` node.
-  - If `requires_human` is True, it routes to `human_review` which halts execution.
-  - Otherwise, it routes to `action` or `END`.
-- **Interrupt Gates**: Configured as `interrupt_before=["action", "human_review"]`. When the graph routes to these nodes, it pauses execution and waits for a continuation signal.
+### 1. Prerequisites
 
-### 3. Human-in-the-Loop Resumption & Revision loops
-- If approved, the FastAPI endpoint resumes execution by invoking the graph with a `None` state payload.
-- If rejected, the human's feedback is written to the state history as a `HumanMessage`, the `critic_score` is reset to `0.0`, and the graph is forced back to the `research` agent to correct the findings.
+- Python 3.11+
+- [Ollama](https://ollama.com) (optional — skip if using Gemini)
 
----
-
-## Run and Verification Instructions
-
-Follow these simple steps in your terminal to start the entire system:
-
-### 1. Set Up Environment
-First, create your virtual environment and install the required dependencies:
 ```powershell
-python -m venv venv
-.\venv\Scripts\activate
+ollama pull llama3.2
+```
+
+### 2. Setup
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Credentials
-Open the `.env` file in the root folder and add your API keys:
-```env
-GEMINI_API_KEY=your_real_gemini_key
-TAVILY_API_KEY=your_real_tavily_key
-```
-> [!NOTE]
-> If you do not configure `GEMINI_API_KEY` or `TAVILY_API_KEY`, the application will use the pre-built `MockLLM` and mock search engines. This allows you to experience the full cyclic loop, pause gates, and database updates instantly without needing credentials.
+### 3. Configure
 
-### 3. Run FastAPI Backend
-Launch the API server to handle graph requests:
+Copy `.env.example` to `.env` and adjust:
+
+```env
+# LLM Provider: "ollama" (default) or "gemini"
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+
+# Gemini (fallback if Ollama is unavailable)
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+> No API keys required if using Ollama + DuckDuckGo. Everything runs locally and free.
+
+### 4. Run
+
+**Terminal 1 — API Server:**
 ```powershell
 uvicorn api.main:app --reload --port 8000
 ```
-This starts the backend at `http://127.0.0.1:8000`. You can inspect the Swagger docs at `http://127.0.0.1:8000/docs`.
 
-### 4. Run Streamlit UI
-In a separate terminal tab, run the frontend dashboard:
+**Terminal 2 — Dashboard:**
 ```powershell
 streamlit run ui/dashboard.py
 ```
-This opens the browser dashboard. You can enter task instructions, watch the agents complete tasks, check the SQLite database updates, and interact with the **Human-in-the-Loop** approval cards.
+
+Open `http://localhost:8501` to use the dashboard.
+
+## LLM Fallback Chain
+
+The system tries providers in order until one succeeds:
+
+| Priority | Provider | Requires |
+|----------|----------|----------|
+| 1 | Ollama (local) | Ollama running + model pulled |
+| 2 | Gemini API | `GEMINI_API_KEY` set |
+| 3 | MockLLM | Nothing (canned responses for demo) |
+
+Each provider uses **exponential backoff retry** (configurable via `LLM_MAX_RETRIES` / `LLM_RETRY_DELAY`).
+
+## Web Search Fallback
+
+| Priority | Provider | Requires |
+|----------|----------|----------|
+| 1 | Tavily API | `TAVILY_API_KEY` set |
+| 2 | DuckDuckGo | Nothing (free, no key) |
+| 3 | Mock search | Nothing (canned results) |
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/tasks` | Create and execute a new task |
+| `GET` | `/api/tasks/{thread_id}` | Get task status and state |
+| `POST` | `/api/tasks/{thread_id}/resume` | Approve/reject a paused task |
+
+## Dashboard Features
+
+- **KPI Cards** — critic score, iteration count, human-review status, actions count
+- **Chart Extraction** — auto-detects pricing (`$XX/month`) and percentages (`XX%`) from LLM output → renders bar/pie charts via Plotly
+- **Human-in-the-Loop Gate** — approve action execution or request revision with feedback
+- **Auto-Refresh** — toggle for live monitoring
+- **Dark Glassmorphism Theme** — gradient headers, glow effects, responsive layout
+
+## Example Tasks
+
+```text
+"Compare AWS Lambda vs Azure Functions pricing for 1M requests/month"
+"Research current salaries for senior engineers in US vs India and compute the difference"
+"Find top 3 CRM tools, compare their enterprise pricing, and log results to database"
+"Analyze SLA benchmarks for ticket resolution time and send a Slack notification"
+```
