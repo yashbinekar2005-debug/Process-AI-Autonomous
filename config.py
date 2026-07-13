@@ -1,6 +1,16 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+def _get_streamlit_secret(key: str, default: str = "") -> str:
+    """Try to read a secret from Streamlit's secrets manager."""
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return default
+
 class Settings(BaseSettings):
     # LLM Configuration (Ollama preferred, Gemini fallback)
     LLM_PROVIDER: str = "ollama"  # "ollama" or "gemini"
@@ -39,3 +49,13 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+# Override with Streamlit secrets if env vars are empty (for Streamlit Cloud deployment)
+if not settings.GEMINI_API_KEY:
+    settings.GEMINI_API_KEY = _get_streamlit_secret("GEMINI_API_KEY", "")
+if not settings.TAVILY_API_KEY:
+    settings.TAVILY_API_KEY = _get_streamlit_secret("TAVILY_API_KEY", "")
+if settings.REDIS_URL == "redis://localhost:6379":
+    st_redis = _get_streamlit_secret("REDIS_URL", "")
+    if st_redis:
+        settings.REDIS_URL = st_redis

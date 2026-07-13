@@ -1,12 +1,10 @@
 import streamlit as st
-import httpx
-import json
+import uuid
 import time
 import re
 import plotly.express as px
-import plotly.graph_objects as go
 import pandas as pd
-from collections import Counter
+from langchain_core.messages import HumanMessage
 
 st.set_page_config(
     page_title="Enterprise AI Orchestrator",
@@ -14,8 +12,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-API_URL = "http://localhost:8000/api/tasks"
 
 st.markdown("""
 <style>
@@ -148,30 +144,77 @@ div[data-testid="stTabs"] button {
 </style>
 """, unsafe_allow_html=True)
 
+# --- Initialize Graph (cached so it's only built once per session) ---
+@st.cache_resource
+def load_graph():
+    from graph.builder import get_graph
+    return get_graph()
+
+graph = load_graph()
+
 # --- State ---
 if "threads" not in st.session_state:
-    st.session_state["threads"] = []
+    st.session_state["threads"] = {}
 if "current_thread" not in st.session_state:
     st.session_state["current_thread"] = None
 if "auto_refresh" not in st.session_state:
     st.session_state["auto_refresh"] = False
 
 # --- Helpers ---
-def fetch_task(thread_id):
-    try:
-        r = httpx.get(f"{API_URL}/{thread_id}", timeout=10)
-        if r.status_code == 200:
-            return r.json()
-    except:
-        pass
-    return None
+def serialize_message(m):
+    role = "assistant"
+    if m.type == "human":
+        role = "user"
+    elif m.type == "system":
+        role = "system"
+    name = getattr(m, "name", None)
+    return {
+        "role": role,
+        "name": name if name else role.capitalize(),
+        "content": str(m.content)
+    }
+
+def get_task_status(thread_id):
+    config = {"configurable": {"thread_id": thread_id}}
+    state_info = graph.get_state(config)
+
+    if not state_info.values:
+        return None
+
+    values = state_info.values
+    pending = list(state_info.next)
+
+    if not pending:
+        status = "completed"
+    elif any(node in ["action", "human_review"] for node in pending):
+        status = "paused"
+    else:
+        status = "running"
+
+    serialized_state = {
+        "task": values.get("task", ""),
+        "research_output": values.get("research_output", ""),
+        "analysis_output": values.get("analysis_output", ""),
+        "actions_taken": values.get("actions_taken", []),
+        "critic_score": values.get("critic_score", 0.0),
+        "iteration": values.get("iteration", 0),
+        "requires_human": values.get("requires_human", False),
+        "final_output": values.get("final_output", ""),
+        "messages": [serialize_message(m) for m in values.get("messages", [])]
+    }
+
+    return {
+        "thread_id": thread_id,
+        "status": status,
+        "pending_nodes": pending,
+        "state": serialized_state
+    }
 
 def extract_chart_data(text):
     if not text:
         return {}
     data = {}
 
-    # --- BAR CHART: Extract "$XX/month" or "$XX/yr" patterns with preceding names ---
     pricing_pattern = r'([A-Za-z][A-Za-z\s]+?)\s*[:\-]?\s*\$(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:/\s*(?:month|mo|yr|year|user|seat|agent))'
     pricing_matches = re.findall(pricing_pattern, text, re.IGNORECASE)
     if pricing_matches:
@@ -183,7 +226,6 @@ def extract_chart_data(text):
         if items:
             data["bar"] = {"type": "pricing", "items": items, "title": "Pricing Comparison ($/month)"}
 
-    # --- PIE CHART: Extract "X%" patterns with labels ---
     percent_pattern = r'([A-Za-z][A-Za-z\s]+?)\s*[:\-]?\s*(\d+(?:\.\d+)?)\s*%'
     percent_matches = re.findall(percent_pattern, text, re.IGNORECASE)
     if percent_matches:
@@ -194,7 +236,6 @@ def extract_chart_data(text):
         if items:
             data["pie"] = {"items": items, "title": "Distribution Breakdown"}
 
-    # --- BAR CHART 2: Extract numbered lists with $ values (fallback) ---
     if "bar" not in data:
         list_pattern = r'(?:^|\n)\s*[\-\*]\s*(.+?)\s*[:\-]?\s*\$(\d+(?:,\d{3})*(?:\.\d+)?)'
         list_matches = re.findall(list_pattern, text, re.IGNORECASE | re.MULTILINE)
@@ -272,18 +313,7 @@ with st.sidebar:
                 '</div>', unsafe_allow_html=True)
     st.markdown('<p style="color:#475569;font-size:0.8rem;margin-top:-8px;margin-bottom:20px;">Multi-Agent Automation Hub</p>', unsafe_allow_html=True)
 
-    api_status = False
-    try:
-        httpx.get(API_URL.replace("/tasks", ""), timeout=5)
-        api_status = True
-    except:
-        api_status = False
-
-    if api_status:
-        st.markdown(f'<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:8px;margin-bottom:16px;"><span style="color:#34d399;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">Backend Connected</span></div>', unsafe_allow_html=True)
-    else:
-        st.markdown(f'<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.15);border-radius:8px;margin-bottom:16px;"><span style="color:#ef4444;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">Disconnected</span></div>', unsafe_allow_html=True)
-        st.markdown('<p style="color:#64748b;font-size:0.75rem;">Run: <code style="background:#1e293b;padding:2px 6px;border-radius:4px;">uvicorn api.main:app --reload --port 8000</code></p>', unsafe_allow_html=True)
+    st.markdown('<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:8px;margin-bottom:16px;"><span style="color:#34d399;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">Graph Ready (Direct Mode)</span></div>', unsafe_allow_html=True)
 
     st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin:16px 0;"></div>', unsafe_allow_html=True)
 
@@ -304,25 +334,38 @@ with st.sidebar:
     if triggered:
         if not new_task.strip():
             st.warning("Enter a task first.")
-        elif not api_status:
-            st.error("Backend not connected.")
         else:
             with st.spinner("Running multi-agent graph..."):
                 try:
-                    res = httpx.post(API_URL, json={"task": new_task}, timeout=120.0)
-                    if res.status_code == 200:
-                        data = res.json()
-                        tid = data["thread_id"]
-                        if tid not in st.session_state["threads"]:
-                            st.session_state["threads"].insert(0, tid)
-                        st.session_state["current_thread"] = tid
-                        st.success("Task started!")
-                        time.sleep(0.5)
-                        st.rerun()
-                    else:
-                        st.error(f"Error: {res.text}")
+                    thread_id = str(uuid.uuid4())
+                    config = {"configurable": {"thread_id": thread_id}}
+
+                    initial_state = {
+                        "task": new_task,
+                        "messages": [HumanMessage(content=new_task)],
+                        "research_output": "",
+                        "analysis_output": "",
+                        "actions_taken": [],
+                        "critic_score": 0.0,
+                        "iteration": 0,
+                        "requires_human": False,
+                        "final_output": "",
+                        "next": ""
+                    }
+
+                    for event in graph.stream(initial_state, config=config):
+                        pass
+
+                    st.session_state["threads"][thread_id] = {
+                        "task": new_task,
+                        "created_at": time.time()
+                    }
+                    st.session_state["current_thread"] = thread_id
+                    st.success("Task started!")
+                    time.sleep(0.5)
+                    st.rerun()
                 except Exception as e:
-                    st.error(f"Connection error: {e}")
+                    st.error(f"Error: {e}")
 
     st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin:16px 0;"></div>', unsafe_allow_html=True)
     st.markdown('<p style="font-family:Outfit;font-weight:600;font-size:0.9rem;color:#cbd5e1;">📂 Threads</p>', unsafe_allow_html=True)
@@ -333,18 +376,26 @@ with st.sidebar:
         st.rerun()
 
     if st.session_state["threads"]:
-        selected = st.selectbox(
+        thread_ids = list(st.session_state["threads"].keys())
+        labels = [f"{tid[:8]}... — {st.session_state['threads'][tid].get('task', '')[:40]}" for tid in thread_ids]
+        current_idx = 0
+        if st.session_state["current_thread"] in thread_ids:
+            current_idx = thread_ids.index(st.session_state["current_thread"])
+
+        selected_label = st.selectbox(
             "Select thread:",
-            st.session_state["threads"],
-            index=st.session_state["threads"].index(st.session_state["current_thread"]) if st.session_state["current_thread"] in st.session_state["threads"] else 0,
+            labels,
+            index=current_idx,
             label_visibility="collapsed"
         )
-        if selected != st.session_state["current_thread"]:
-            st.session_state["current_thread"] = selected
+        selected_idx = labels.index(selected_label)
+        selected_tid = thread_ids[selected_idx]
+        if selected_tid != st.session_state["current_thread"]:
+            st.session_state["current_thread"] = selected_tid
             st.rerun()
 
         if st.button("Clear All Threads", use_container_width=True):
-            st.session_state["threads"] = []
+            st.session_state["threads"] = {}
             st.session_state["current_thread"] = None
             st.rerun()
     else:
@@ -389,7 +440,7 @@ else:
         time.sleep(0.1)
         st.rerun()
 
-    task_data = fetch_task(st.session_state["current_thread"])
+    task_data = get_task_status(st.session_state["current_thread"])
 
     if not task_data:
         st.error("Failed to fetch task state. Thread may have expired.")
@@ -411,7 +462,6 @@ else:
             label = {"completed": "Completed", "paused": "Paused", "running": "Running"}.get(status, "Running")
             st.markdown(f'<div class="status-badge {cls}">{icon} {label}</div>', unsafe_allow_html=True)
 
-        # Human review gate
         if status == "paused":
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown('<div class="approval-card">', unsafe_allow_html=True)
@@ -423,37 +473,60 @@ else:
             with a1:
                 if st.button("✅ Approve & Execute", use_container_width=True):
                     try:
-                        r = httpx.post(f"{API_URL}/{st.session_state['current_thread']}/resume", json={"approved": True}, timeout=180.0)
-                        if r.status_code == 200:
+                        tid = st.session_state["current_thread"]
+                        config = {"configurable": {"thread_id": tid}}
+                        state_info = graph.get_state(config)
+
+                        if state_info.values:
+                            for event in graph.stream(None, config=config):
+                                pass
+
+                            max_extra = 5
+                            for _ in range(max_extra):
+                                state_after = graph.get_state(config)
+                                if "action" in state_after.next or "human_review" in state_after.next:
+                                    for event in graph.stream(None, config=config):
+                                        pass
+                                else:
+                                    break
+
                             st.success("Approved! Resuming...")
                             time.sleep(1)
                             st.rerun()
-                        else:
-                            st.error(f"Failed ({r.status_code}): {r.text}")
                     except Exception as e:
-                        st.error(f"Connection error: {e}")
+                        st.error(f"Error: {e}")
             with a2:
                 if st.button("🔄 Request Revision", use_container_width=True):
                     if not feedback.strip():
                         st.warning("Provide feedback first.")
                     else:
                         try:
-                            r = httpx.post(f"{API_URL}/{st.session_state['current_thread']}/resume", json={"approved": False, "feedback": feedback}, timeout=180.0)
-                            if r.status_code == 200:
-                                st.info("Feedback sent. Looping back to research...")
-                                time.sleep(1)
-                                st.rerun()
-                            else:
-                                st.error(f"Failed ({r.status_code}): {r.text}")
+                            tid = st.session_state["current_thread"]
+                            config = {"configurable": {"thread_id": tid}}
+
+                            graph.update_state(
+                                config,
+                                {
+                                    "messages": [HumanMessage(content=f"Human User Request for Revision: {feedback}")],
+                                    "critic_score": 0.0,
+                                    "requires_human": False,
+                                    "next": "research"
+                                }
+                            )
+
+                            for event in graph.stream(None, config=config):
+                                pass
+
+                            st.info("Feedback sent. Looping back to research...")
+                            time.sleep(1)
+                            st.rerun()
                         except Exception as e:
-                            st.error(f"Connection error: {e}")
+                            st.error(f"Error: {e}")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # Tabs
         st.markdown("<br>", unsafe_allow_html=True)
         tabs = st.tabs(["📊 Dashboard", "💬 Messages", "🔍 Research", "📈 Analysis", "⚡ Actions"])
 
-        # --- TAB 1: Dashboard with charts ---
         with tabs[0]:
             research_text = state.get("research_output", "")
             analysis_text = state.get("analysis_output", "")
@@ -483,7 +556,6 @@ else:
                 else:
                     st.markdown('<p style="color:#475569;">Pending...</p>', unsafe_allow_html=True)
 
-        # --- TAB 2: Messages ---
         with tabs[1]:
             st.markdown('<p class="section-title">💬 Agent Conversation Log</p>', unsafe_allow_html=True)
             for msg in state.get("messages", []):
@@ -498,7 +570,6 @@ else:
                     cls = "agent-bubble"; icon = "🤖"
                 st.markdown(f'<div class="{cls}"><div class="agent-title">{icon} {name}</div><div style="font-size:0.85rem;">{content}</div></div>', unsafe_allow_html=True)
 
-        # --- TAB 3: Research ---
         with tabs[2]:
             st.markdown('<p class="section-title">🔍 Full Research Report</p>', unsafe_allow_html=True)
             if research_text:
@@ -506,7 +577,6 @@ else:
             else:
                 st.info("No research output yet.")
 
-        # --- TAB 4: Analysis ---
         with tabs[3]:
             st.markdown('<p class="section-title">📈 Full Analysis Report</p>', unsafe_allow_html=True)
             if analysis_text:
@@ -514,7 +584,6 @@ else:
             else:
                 st.info("No analysis output yet.")
 
-        # --- TAB 5: Actions ---
         with tabs[4]:
             st.markdown('<p class="section-title">⚡ Side Effects Executed</p>', unsafe_allow_html=True)
             actions = state.get("actions_taken", [])
@@ -524,7 +593,6 @@ else:
             else:
                 st.info("No actions executed yet (awaits human approval or task completion).")
 
-        # Footer stats
         st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin-top:24px;padding-top:16px;">', unsafe_allow_html=True)
         st.markdown(
             f'<div style="display:flex;gap:24px;font-size:0.8rem;color:#475569;">'
