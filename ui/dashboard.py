@@ -359,8 +359,6 @@ with st.sidebar:
             st.warning("Enter a task first.")
         elif not has_key:
             st.error("Enter your API key first.")
-        else:
-            st.rerun()
 
     st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin:16px 0;"></div>', unsafe_allow_html=True)
     st.markdown('<p style="font-family:Outfit;font-weight:600;font-size:0.9rem;color:#cbd5e1;">📂 Threads</p>', unsafe_allow_html=True)
