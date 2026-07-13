@@ -158,6 +158,8 @@ if "auto_refresh" not in st.session_state:
     st.session_state["auto_refresh"] = False
 if "api_key" not in st.session_state:
     st.session_state["api_key"] = ""
+if "groq_api_key" not in st.session_state:
+    st.session_state["groq_api_key"] = ""
 if "llm_provider" not in st.session_state:
     st.session_state["llm_provider"] = "gemini"
 
@@ -283,8 +285,8 @@ with st.sidebar:
 
     llm_provider = st.selectbox(
         "LLM Provider",
-        ["gemini", "ollama"],
-        index=0 if st.session_state["llm_provider"] == "gemini" else 1,
+        ["gemini", "groq", "ollama"],
+        index=["gemini", "groq", "ollama"].index(st.session_state["llm_provider"]),
         label_visibility="collapsed"
     )
 
@@ -298,6 +300,18 @@ with st.sidebar:
         )
         if api_key != st.session_state["api_key"]:
             st.session_state["api_key"] = api_key
+            st.cache_resource.clear()
+            st.rerun()
+    elif llm_provider == "groq":
+        groq_key = st.text_input(
+            "Groq API Key",
+            value=st.session_state["groq_api_key"],
+            type="password",
+            placeholder="Enter your Groq API key...",
+            label_visibility="collapsed"
+        )
+        if groq_key != st.session_state["groq_api_key"]:
+            st.session_state["groq_api_key"] = groq_key
             st.cache_resource.clear()
             st.rerun()
     else:
@@ -314,7 +328,11 @@ with st.sidebar:
         st.rerun()
 
     # Show connection status
-    has_key = bool(st.session_state["api_key"]) if llm_provider == "gemini" else True
+    has_key = True
+    if llm_provider == "gemini":
+        has_key = bool(st.session_state["api_key"])
+    elif llm_provider == "groq":
+        has_key = bool(st.session_state["groq_api_key"])
     if has_key:
         st.markdown('<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:8px;margin:12px 0 16px;"><span style="color:#34d399;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">Graph Ready (Direct Mode)</span></div>', unsafe_allow_html=True)
     else:
@@ -380,16 +398,18 @@ with st.sidebar:
 
 # --- Load Graph (after sidebar so API key is available) ---
 @st.cache_resource
-def load_graph(api_key, provider):
+def load_graph(api_key, provider, groq_key):
     from config import settings
     if api_key:
         settings.GEMINI_API_KEY = api_key
+    if groq_key:
+        settings.GROQ_API_KEY = groq_key
     if provider:
         settings.LLM_PROVIDER = provider
     from graph.builder import get_graph
     return get_graph()
 
-graph = load_graph(st.session_state["api_key"], st.session_state["llm_provider"])
+graph = load_graph(st.session_state["api_key"], st.session_state["llm_provider"], st.session_state["groq_api_key"])
 
 def get_task_status(thread_id):
     config = {"configurable": {"thread_id": thread_id}}

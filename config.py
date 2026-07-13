@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3.2"
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
     # Web Search
     TAVILY_API_KEY: str = ""
@@ -53,6 +55,8 @@ settings = Settings()
 # Override with Streamlit secrets if env vars are empty (for Streamlit Cloud deployment)
 if not settings.GEMINI_API_KEY:
     settings.GEMINI_API_KEY = _get_streamlit_secret("GEMINI_API_KEY", "")
+if not settings.GROQ_API_KEY:
+    settings.GROQ_API_KEY = _get_streamlit_secret("GROQ_API_KEY", "")
 if not settings.TAVILY_API_KEY:
     settings.TAVILY_API_KEY = _get_streamlit_secret("TAVILY_API_KEY", "")
 if settings.REDIS_URL == "redis://localhost:6379":

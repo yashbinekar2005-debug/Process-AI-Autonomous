@@ -109,6 +109,26 @@ def _create_gemini_llm():
         logger.warning(f"Failed to initialize Gemini: {e}")
         return None
 
+def _create_groq_llm():
+    api_key = settings.GROQ_API_KEY
+    if not api_key or api_key == "your_groq_api_key_here":
+        return None
+    try:
+        from langchain_groq import ChatGroq
+        llm = ChatGroq(
+            groq_api_key=api_key,
+            model=settings.GROQ_MODEL,
+            temperature=0.1
+        )
+        logger.info(f"Initialized Groq LLM: {settings.GROQ_MODEL}")
+        return llm
+    except ImportError:
+        logger.warning("langchain-groq not installed. Install with: pip install langchain-groq")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to initialize Groq: {e}")
+        return None
+
 def _invoke_with_retry(llm, messages, max_retries=None, delay=None):
     max_retries = max_retries or settings.LLM_MAX_RETRIES
     delay = delay or settings.LLM_RETRY_DELAY
@@ -137,13 +157,29 @@ class FallbackLLM:
             ollama_llm = _create_ollama_llm()
             if ollama_llm:
                 self.llms.append(("ollama", ollama_llm))
+            groq_llm = _create_groq_llm()
+            if groq_llm:
+                self.llms.append(("groq", groq_llm))
             gemini_llm = _create_gemini_llm()
             if gemini_llm:
                 self.llms.append(("gemini", gemini_llm))
+        elif provider == "groq":
+            groq_llm = _create_groq_llm()
+            if groq_llm:
+                self.llms.append(("groq", groq_llm))
+            gemini_llm = _create_gemini_llm()
+            if gemini_llm:
+                self.llms.append(("gemini", gemini_llm))
+            ollama_llm = _create_ollama_llm()
+            if ollama_llm:
+                self.llms.append(("ollama", ollama_llm))
         else:
             gemini_llm = _create_gemini_llm()
             if gemini_llm:
                 self.llms.append(("gemini", gemini_llm))
+            groq_llm = _create_groq_llm()
+            if groq_llm:
+                self.llms.append(("groq", groq_llm))
             ollama_llm = _create_ollama_llm()
             if ollama_llm:
                 self.llms.append(("ollama", ollama_llm))
