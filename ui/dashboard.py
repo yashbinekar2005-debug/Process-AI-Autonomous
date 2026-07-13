@@ -149,21 +149,17 @@ div[data-testid="stTabs"] button {
 </style>
 """, unsafe_allow_html=True)
 
-# --- Initialize Graph (cached so it's only built once per session) ---
-@st.cache_resource
-def load_graph():
-    from graph.builder import get_graph
-    return get_graph()
-
-graph = load_graph()
-
-# --- State ---
+# --- Session State ---
 if "threads" not in st.session_state:
     st.session_state["threads"] = {}
 if "current_thread" not in st.session_state:
     st.session_state["current_thread"] = None
 if "auto_refresh" not in st.session_state:
     st.session_state["auto_refresh"] = False
+if "api_key" not in st.session_state:
+    st.session_state["api_key"] = ""
+if "llm_provider" not in st.session_state:
+    st.session_state["llm_provider"] = "gemini"
 
 # --- Helpers ---
 def serialize_message(m):
@@ -177,42 +173,6 @@ def serialize_message(m):
         "role": role,
         "name": name if name else role.capitalize(),
         "content": str(m.content)
-    }
-
-def get_task_status(thread_id):
-    config = {"configurable": {"thread_id": thread_id}}
-    state_info = graph.get_state(config)
-
-    if not state_info.values:
-        return None
-
-    values = state_info.values
-    pending = list(state_info.next)
-
-    if not pending:
-        status = "completed"
-    elif any(node in ["action", "human_review"] for node in pending):
-        status = "paused"
-    else:
-        status = "running"
-
-    serialized_state = {
-        "task": values.get("task", ""),
-        "research_output": values.get("research_output", ""),
-        "analysis_output": values.get("analysis_output", ""),
-        "actions_taken": values.get("actions_taken", []),
-        "critic_score": values.get("critic_score", 0.0),
-        "iteration": values.get("iteration", 0),
-        "requires_human": values.get("requires_human", False),
-        "final_output": values.get("final_output", ""),
-        "messages": [serialize_message(m) for m in values.get("messages", [])]
-    }
-
-    return {
-        "thread_id": thread_id,
-        "status": status,
-        "pending_nodes": pending,
-        "state": serialized_state
     }
 
 def extract_chart_data(text):
@@ -318,7 +278,47 @@ with st.sidebar:
                 '</div>', unsafe_allow_html=True)
     st.markdown('<p style="color:#475569;font-size:0.8rem;margin-top:-8px;margin-bottom:20px;">Multi-Agent Automation Hub</p>', unsafe_allow_html=True)
 
-    st.markdown('<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:8px;margin-bottom:16px;"><span style="color:#34d399;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">Graph Ready (Direct Mode)</span></div>', unsafe_allow_html=True)
+    # --- API Key & Provider Settings ---
+    st.markdown('<p style="font-family:Outfit;font-weight:600;font-size:0.9rem;color:#cbd5e1;">🔑 Settings</p>', unsafe_allow_html=True)
+
+    llm_provider = st.selectbox(
+        "LLM Provider",
+        ["gemini", "ollama"],
+        index=0 if st.session_state["llm_provider"] == "gemini" else 1,
+        label_visibility="collapsed"
+    )
+
+    if llm_provider == "gemini":
+        api_key = st.text_input(
+            "Gemini API Key",
+            value=st.session_state["api_key"],
+            type="password",
+            placeholder="Enter your Gemini API key...",
+            label_visibility="collapsed"
+        )
+        if api_key != st.session_state["api_key"]:
+            st.session_state["api_key"] = api_key
+            st.cache_resource.clear()
+            st.rerun()
+    else:
+        ollama_url = st.text_input(
+            "Ollama URL",
+            value="http://localhost:11434",
+            placeholder="http://localhost:11434",
+            label_visibility="collapsed"
+        )
+
+    if llm_provider != st.session_state["llm_provider"]:
+        st.session_state["llm_provider"] = llm_provider
+        st.cache_resource.clear()
+        st.rerun()
+
+    # Show connection status
+    has_key = bool(st.session_state["api_key"]) if llm_provider == "gemini" else True
+    if has_key:
+        st.markdown('<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:8px;margin:12px 0 16px;"><span style="color:#34d399;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">Graph Ready (Direct Mode)</span></div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.15);border-radius:8px;margin:12px 0 16px;"><span style="color:#ef4444;font-size:0.7rem;">●</span><span style="color:#94a3b8;font-size:0.8rem;">No API Key Provided</span></div>', unsafe_allow_html=True)
 
     st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin:16px 0;"></div>', unsafe_allow_html=True)
 
@@ -339,38 +339,10 @@ with st.sidebar:
     if triggered:
         if not new_task.strip():
             st.warning("Enter a task first.")
+        elif not has_key:
+            st.error("Enter your API key first.")
         else:
-            with st.spinner("Running multi-agent graph..."):
-                try:
-                    thread_id = str(uuid.uuid4())
-                    config = {"configurable": {"thread_id": thread_id}}
-
-                    initial_state = {
-                        "task": new_task,
-                        "messages": [HumanMessage(content=new_task)],
-                        "research_output": "",
-                        "analysis_output": "",
-                        "actions_taken": [],
-                        "critic_score": 0.0,
-                        "iteration": 0,
-                        "requires_human": False,
-                        "final_output": "",
-                        "next": ""
-                    }
-
-                    for event in graph.stream(initial_state, config=config):
-                        pass
-
-                    st.session_state["threads"][thread_id] = {
-                        "task": new_task,
-                        "created_at": time.time()
-                    }
-                    st.session_state["current_thread"] = thread_id
-                    st.success("Task started!")
-                    time.sleep(0.5)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+            st.rerun()
 
     st.markdown('<div style="border-top:1px solid rgba(255,255,255,0.04);margin:16px 0;"></div>', unsafe_allow_html=True)
     st.markdown('<p style="font-family:Outfit;font-weight:600;font-size:0.9rem;color:#cbd5e1;">📂 Threads</p>', unsafe_allow_html=True)
@@ -405,6 +377,89 @@ with st.sidebar:
             st.rerun()
     else:
         st.markdown('<p style="color:#475569;font-size:0.85rem;text-align:center;padding:12px 0;">No threads yet.<br>Trigger a task to begin.</p>', unsafe_allow_html=True)
+
+# --- Load Graph (after sidebar so API key is available) ---
+@st.cache_resource
+def load_graph(api_key, provider):
+    from config import settings
+    if api_key:
+        settings.GEMINI_API_KEY = api_key
+    if provider:
+        settings.LLM_PROVIDER = provider
+    from graph.builder import get_graph
+    return get_graph()
+
+graph = load_graph(st.session_state["api_key"], st.session_state["llm_provider"])
+
+def get_task_status(thread_id):
+    config = {"configurable": {"thread_id": thread_id}}
+    state_info = graph.get_state(config)
+
+    if not state_info.values:
+        return None
+
+    values = state_info.values
+    pending = list(state_info.next)
+
+    if not pending:
+        status = "completed"
+    elif any(node in ["action", "human_review"] for node in pending):
+        status = "paused"
+    else:
+        status = "running"
+
+    serialized_state = {
+        "task": values.get("task", ""),
+        "research_output": values.get("research_output", ""),
+        "analysis_output": values.get("analysis_output", ""),
+        "actions_taken": values.get("actions_taken", []),
+        "critic_score": values.get("critic_score", 0.0),
+        "iteration": values.get("iteration", 0),
+        "requires_human": values.get("requires_human", False),
+        "final_output": values.get("final_output", ""),
+        "messages": [serialize_message(m) for m in values.get("messages", [])]
+    }
+
+    return {
+        "thread_id": thread_id,
+        "status": status,
+        "pending_nodes": pending,
+        "state": serialized_state
+    }
+
+# --- Handle Task Trigger ---
+if triggered and new_task.strip() and has_key:
+    with st.spinner("Running multi-agent graph..."):
+        try:
+            thread_id = str(uuid.uuid4())
+            config = {"configurable": {"thread_id": thread_id}}
+
+            initial_state = {
+                "task": new_task,
+                "messages": [HumanMessage(content=new_task)],
+                "research_output": "",
+                "analysis_output": "",
+                "actions_taken": [],
+                "critic_score": 0.0,
+                "iteration": 0,
+                "requires_human": False,
+                "final_output": "",
+                "next": ""
+            }
+
+            for event in graph.stream(initial_state, config=config):
+                pass
+
+            st.session_state["threads"][thread_id] = {
+                "task": new_task,
+                "created_at": time.time()
+            }
+            st.session_state["current_thread"] = thread_id
+            st.success("Task started!")
+            time.sleep(0.5)
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error: {e}")
 
 # --- Main Panel ---
 st.markdown('<div class="gradient-header">Enterprise AI Orchestrator</div>', unsafe_allow_html=True)
